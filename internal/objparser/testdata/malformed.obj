@@ -1,0 +1,9 @@
+# garbage mixed with a valid triangle
+v 0 0 0
+v abc def ghi
+v 1 0 0
+banana
+v 0 1 0
+f 1 2
+f 1 2 3
+vt not-a-number
