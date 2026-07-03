@@ -6,6 +6,7 @@ package objparser
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -74,6 +75,10 @@ type builder struct {
 	mesh  Mesh
 	dedup map[[3]int32]uint32
 
+	materials map[string]Material // from mtllib files
+	buckets   map[string][]uint32 // face indices per usemtl name
+	current   string              // active usemtl name ("" = default)
+
 	poly      []uint32      // corner indices of the face being assembled
 	cornerBuf []mathgl.Vec3 // scratch corner positions for triangulation
 	warnings  int
@@ -84,7 +89,11 @@ func warn(line int, format string, args ...any) {
 }
 
 func parseOBJBytes(data []byte, dir string) (*Mesh, error) {
-	b := &builder{dedup: make(map[[3]int32]uint32)}
+	b := &builder{
+		dedup:     make(map[[3]int32]uint32),
+		materials: make(map[string]Material),
+		buckets:   make(map[string][]uint32),
+	}
 
 	lineNo := 0
 	for len(data) > 0 {
@@ -102,10 +111,10 @@ func parseOBJBytes(data []byte, dir string) (*Mesh, error) {
 		}
 	}
 
+	b.finishGroups()
 	if len(b.mesh.Indices) == 0 {
 		return nil, fmt.Errorf("objparser: no renderable faces found")
 	}
-	b.finishGroups()
 	b.computeBBox()
 	return &b.mesh, nil
 }
@@ -148,9 +157,30 @@ func (b *builder) parseLine(line string, lineNo int, dir string) error {
 		}
 	case "f":
 		return b.parseFace(fields[1:], lineNo)
-	case "o", "g", "s", "mtllib", "usemtl":
-		// object/group/smoothing names are irrelevant to rendering;
-		// material directives are handled by the mtl support layer.
+	case "mtllib":
+		for _, name := range fields[1:] {
+			data, err := os.ReadFile(dir + "/" + name)
+			if err != nil {
+				b.warnings++
+				warn(lineNo, "mtllib %s: %v (using default material)", name, err)
+				continue
+			}
+			mats, err := parseMTL(data, dir)
+			if err != nil {
+				b.warnings++
+				warn(lineNo, "mtllib %s: %v", name, err)
+				continue
+			}
+			for k, v := range mats {
+				b.materials[k] = v
+			}
+		}
+	case "usemtl":
+		if len(fields) >= 2 {
+			b.current = fields[1]
+		}
+	case "o", "g", "s":
+		// object/group/smoothing names are irrelevant to rendering.
 	default:
 		b.warnings++
 		warn(lineNo, "unknown directive %q", fields[0])
@@ -282,29 +312,60 @@ func (b *builder) vertexIndex(vi, ti, ni int32) uint32 {
 }
 
 // emitPolygon triangulates the polygon (mesh-space corner indices) and
-// appends the resulting triangles.
+// appends the resulting triangles to the current material's bucket.
 func (b *builder) emitPolygon(poly []uint32) {
+	bucket := b.buckets[b.current]
 	if len(poly) == 3 {
-		b.mesh.Indices = append(b.mesh.Indices, poly[0], poly[1], poly[2])
-		return
+		bucket = append(bucket, poly[0], poly[1], poly[2])
+	} else {
+		b.cornerBuf = b.cornerBuf[:0]
+		for _, idx := range poly {
+			b.cornerBuf = append(b.cornerBuf, b.mesh.Vertices[idx].Pos)
+		}
+		bucket = triangulate(b.cornerBuf, poly, bucket)
 	}
-	b.cornerBuf = b.cornerBuf[:0]
-	for _, idx := range poly {
-		b.cornerBuf = append(b.cornerBuf, b.mesh.Vertices[idx].Pos)
-	}
-	b.mesh.Indices = triangulate(b.cornerBuf, poly, b.mesh.Indices)
+	b.buckets[b.current] = bucket
 }
 
-// finishGroups wraps all indices in a single default-material group; the
-// mtl layer replaces this with real per-material groups.
+// finishGroups concatenates the per-material buckets into the final index
+// buffer, one contiguous group per material. Groups are ordered by texture
+// path then material name so consecutive draws minimize GL state changes.
 func (b *builder) finishGroups() {
-	if len(b.mesh.Groups) == 0 {
-		b.mesh.Groups = []Group{{
-			Material:    DefaultMaterial(),
-			IndexOffset: 0,
-			IndexCount:  len(b.mesh.Indices),
-		}}
+	names := make([]string, 0, len(b.buckets))
+	for name, indices := range b.buckets {
+		if len(indices) > 0 {
+			names = append(names, name)
+		}
 	}
+	sort.Slice(names, func(i, j int) bool {
+		mi, mj := b.materialFor(names[i]), b.materialFor(names[j])
+		if mi.MapKd != mj.MapKd {
+			return mi.MapKd < mj.MapKd
+		}
+		return mi.Name < mj.Name
+	})
+	for _, name := range names {
+		indices := b.buckets[name]
+		b.mesh.Groups = append(b.mesh.Groups, Group{
+			Material:    b.materialFor(name),
+			IndexOffset: len(b.mesh.Indices),
+			IndexCount:  len(indices),
+		})
+		b.mesh.Indices = append(b.mesh.Indices, indices...)
+	}
+}
+
+// materialFor resolves a usemtl name, falling back to the default material
+// (keeping the requested name) when the mtl did not define it.
+func (b *builder) materialFor(name string) Material {
+	if m, ok := b.materials[name]; ok {
+		return m
+	}
+	m := DefaultMaterial()
+	if name != "" {
+		m.Name = name
+	}
+	return m
 }
 
 // DefaultMaterial is used when an .obj has no usable .mtl reference.
