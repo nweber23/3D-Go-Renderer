@@ -74,8 +74,9 @@ type builder struct {
 	mesh  Mesh
 	dedup map[[3]int32]uint32
 
-	poly     []uint32 // corner indices of the face being assembled
-	warnings int
+	poly      []uint32      // corner indices of the face being assembled
+	cornerBuf []mathgl.Vec3 // scratch corner positions for triangulation
+	warnings  int
 }
 
 func warn(line int, format string, args ...any) {
@@ -287,17 +288,11 @@ func (b *builder) emitPolygon(poly []uint32) {
 		b.mesh.Indices = append(b.mesh.Indices, poly[0], poly[1], poly[2])
 		return
 	}
-	b.mesh.Indices = append(b.mesh.Indices, triangulateFan(poly)...)
-}
-
-// triangulateFan is the placeholder polygon splitter; replaced by proper
-// ear clipping in triangulate.go.
-func triangulateFan(poly []uint32) []uint32 {
-	out := make([]uint32, 0, (len(poly)-2)*3)
-	for i := 1; i < len(poly)-1; i++ {
-		out = append(out, poly[0], poly[i], poly[i+1])
+	b.cornerBuf = b.cornerBuf[:0]
+	for _, idx := range poly {
+		b.cornerBuf = append(b.cornerBuf, b.mesh.Vertices[idx].Pos)
 	}
-	return out
+	b.mesh.Indices = triangulate(b.cornerBuf, poly, b.mesh.Indices)
 }
 
 // finishGroups wraps all indices in a single default-material group; the
