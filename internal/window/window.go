@@ -11,6 +11,11 @@ import (
 // Window owns the GLFW window and its OpenGL 4.1 core context.
 type Window struct {
 	handle *glfw.Window
+
+	// Windowed geometry saved across fullscreen switches.
+	winX, winY, winW, winH int
+	fullscreen             bool
+	vsync                  bool
 }
 
 // New initializes GLFW, creates a window with an OpenGL 4.1 core profile
@@ -60,6 +65,37 @@ func (w *Window) ShouldClose() bool { return w.handle.ShouldClose() }
 func (w *Window) SwapAndPoll() {
 	w.handle.SwapBuffers()
 	glfw.PollEvents()
+}
+
+// SetVSync switches buffer-swap synchronization on or off.
+func (w *Window) SetVSync(on bool) {
+	w.vsync = on
+	if on {
+		glfw.SwapInterval(1)
+	} else {
+		glfw.SwapInterval(0)
+	}
+}
+
+// VSync reports the current swap-interval state.
+func (w *Window) VSync() bool { return w.vsync }
+
+// ToggleFullscreen switches to the primary monitor's resolution and back,
+// restoring the previous windowed position and size.
+func (w *Window) ToggleFullscreen() {
+	if w.fullscreen {
+		w.handle.SetMonitor(nil, w.winX, w.winY, w.winW, w.winH, 0)
+		w.fullscreen = false
+	} else {
+		w.winX, w.winY = w.handle.GetPos()
+		w.winW, w.winH = w.handle.GetSize()
+		mon := glfw.GetPrimaryMonitor()
+		mode := mon.GetVideoMode()
+		w.handle.SetMonitor(mon, 0, 0, mode.Width, mode.Height, mode.RefreshRate)
+		w.fullscreen = true
+	}
+	// SetMonitor resets the swap interval on some platforms.
+	w.SetVSync(w.vsync)
 }
 
 // Terminate destroys the window and shuts down GLFW.

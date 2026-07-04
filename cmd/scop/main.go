@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"math"
 	"runtime"
@@ -34,6 +35,9 @@ func main() {
 	height := flag.Int("height", 720, "window height")
 	uvFlag := flag.String("uv", "auto", "uv generation: auto|planar|cylindrical|spherical")
 	wireframeStart := flag.Bool("wireframe-start", false, "start with the wireframe overlay enabled")
+	vsync := flag.Bool("vsync", true, "synchronize buffer swaps with the display")
+	debug := flag.Bool("debug", false, "log frame timings to stdout")
+	flag.Usage = usage
 	flag.Parse()
 
 	modelPath := "models/42.obj"
@@ -62,6 +66,8 @@ func main() {
 	log.Printf("OpenGL %s", win.GLVersion())
 
 	input := window.Attach(win.Handle())
+	win.SetVSync(*vsync)
+	_ = debug // consumed by the frame-timing overlay
 
 	shader, err := renderer.NewShader(shaders.ScopVert, shaders.ScopFrag)
 	if err != nil {
@@ -157,6 +163,20 @@ func main() {
 		}
 		if input.Pressed(glfw.KeyF) {
 			wireframe = !wireframe
+		}
+		if input.Pressed(glfw.KeyF2) {
+			win.SetVSync(!win.VSync())
+		}
+		if input.Pressed(glfw.KeyF11) {
+			win.ToggleFullscreen()
+		}
+		if input.Pressed(glfw.KeyF12) {
+			w, h := win.FramebufferSize()
+			if name, err := renderer.Screenshot(w, h); err != nil {
+				log.Printf("scop: %v", err)
+			} else {
+				log.Printf("saved %s", name)
+			}
 		}
 		if input.Pressed(glfw.KeyR) {
 			cam.Reset()
@@ -265,6 +285,33 @@ func drawGroups(shader *renderer.Shader, m *renderer.GLMesh, groupTex []uint32) 
 		}
 		m.DrawGroup(i)
 	}
+}
+
+func usage() {
+	fmt.Fprintf(flag.CommandLine.Output(),
+		`usage: scop [flags] [model.obj]
+
+Renders a Wavefront .obj model (default models/42.obj).
+
+Flags:
+`)
+	flag.PrintDefaults()
+	fmt.Fprint(flag.CommandLine.Output(), `
+Controls:
+  drag / scroll        orbit camera / zoom (orbit mode)
+  shift-drag / middle  pan (orbit mode)
+  WASD + mouse         move / look (fly mode)  [Space/Ctrl: up/down]
+  C                    toggle camera mode (orbit <-> fly)
+  arrows, IJKL, U/O    translate object on X/Y/Z
+  T                    toggle color <-> texture (crossfade)
+  F                    toggle wireframe overlay
+  R                    reset view and object transforms
+  F1                   toggle FPS overlay
+  F2                   toggle vsync
+  F11                  toggle fullscreen
+  F12                  screenshot (PNG)
+  Esc                  quit
+`)
 }
 
 func minf(a, b float32) float32 {
