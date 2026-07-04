@@ -6,6 +6,8 @@ in vec2 vUV;
 
 uniform int hasNormals;   // 1: use attribute normals; 0: derive flat normals
 uniform vec3 lightDir;    // world space, normalized
+uniform sampler2D tex;
+uniform float mixFactor;  // 0 = flat color, 1 = textured (smoothstepped)
 
 out vec4 fragColor;
 
@@ -22,5 +24,7 @@ void main() {
         : normalize(cross(dFdx(fragPos), dFdy(fragPos)));
     float diff = abs(dot(n, lightDir)) * 0.65 + 0.35;
 
-    fragColor = vec4(vec3(g) * diff, 1.0);
+    vec3 flat_ = vec3(g) * diff;
+    vec3 textured = texture(tex, vUV).rgb * diff;
+    fragColor = vec4(mix(flat_, textured, mixFactor), 1.0);
 }
