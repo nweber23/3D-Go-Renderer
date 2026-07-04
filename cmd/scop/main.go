@@ -73,23 +73,38 @@ func main() {
 	maxExtent := glMesh.MaxExtent()
 	cam := camera.New(center, 2.5*maxExtent)
 
-	// Texture priority: -texture flag > first mtl map_Kd > generated default.
-	texFile := *texturePath
-	if texFile == "" {
-		for _, g := range mesh.Groups {
-			if g.Material.MapKd != "" {
-				texFile = g.Material.MapKd
-				break
+	// Texture priority per group: -texture flag > mtl map_Kd > generated
+	// default. Loaded once here; groups arrive pre-sorted by texture so the
+	// draw loop changes bindings as rarely as possible.
+	texCache := make(map[string]uint32)
+	loadTex := func(path string) uint32 {
+		if t, ok := texCache[path]; ok {
+			return t
+		}
+		t, err := renderer.LoadTexture(path)
+		if err != nil {
+			log.Printf("scop: %v", err)
+			t = 0
+		}
+		texCache[path] = t
+		return t
+	}
+	fallbackTex := loadTex("models/default_texture.png")
+	if *texturePath != "" {
+		if t := loadTex(*texturePath); t != 0 {
+			fallbackTex = t
+		}
+	}
+	groupTex := make([]uint32, len(mesh.Groups))
+	for i, g := range mesh.Groups {
+		groupTex[i] = fallbackTex
+		if *texturePath == "" && g.Material.MapKd != "" {
+			if t := loadTex(g.Material.MapKd); t != 0 {
+				groupTex[i] = t
 			}
 		}
 	}
-	if texFile == "" {
-		texFile = "models/default_texture.png"
-	}
-	texture, err := renderer.LoadTexture(texFile)
-	if err != nil {
-		log.Printf("scop: %v (texture mode disabled)", err)
-	}
+	texture := fallbackTex // any texture available enables the T toggle
 
 	gl.Enable(gl.DEPTH_TEST)
 	gl.ClearColor(0.12, 0.12, 0.14, 1)
@@ -208,10 +223,10 @@ func main() {
 		shader.SetMat4("proj", &proj)
 		shader.SetInt("hasNormals", hasNormals)
 		shader.SetVec3("lightDir", lightDir)
+		shader.SetVec3("viewPos", cam.Eye())
 		shader.SetFloat("mixFactor", smoothMix)
 		shader.SetInt("tex", 0)
 		gl.ActiveTexture(gl.TEXTURE0)
-		gl.BindTexture(gl.TEXTURE_2D, texture)
 
 		glMesh.Bind()
 		if wireframe {
@@ -219,8 +234,7 @@ func main() {
 			// cannot z-fight with it.
 			gl.Enable(gl.POLYGON_OFFSET_FILL)
 			gl.PolygonOffset(1, 1)
-			shader.SetInt("wireframePass", 0)
-			glMesh.DrawAll()
+			drawGroups(shader, glMesh, groupTex)
 			gl.Disable(gl.POLYGON_OFFSET_FILL)
 
 			gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE)
@@ -228,11 +242,28 @@ func main() {
 			glMesh.DrawAll()
 			gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL)
 		} else {
-			shader.SetInt("wireframePass", 0)
-			glMesh.DrawAll()
+			drawGroups(shader, glMesh, groupTex)
 		}
 
 		win.SwapAndPoll()
+	}
+}
+
+// drawGroups renders each material group with its uniforms and texture.
+// Groups are sorted by texture at parse time, so rebinds are minimal.
+func drawGroups(shader *renderer.Shader, m *renderer.GLMesh, groupTex []uint32) {
+	shader.SetInt("wireframePass", 0)
+	var bound uint32 = ^uint32(0)
+	for i := range m.Groups {
+		mat := &m.Groups[i].Material
+		shader.SetVec3("matKd", mat.Kd)
+		shader.SetVec3("matKs", mat.Ks)
+		shader.SetFloat("matNs", mat.Ns)
+		if groupTex[i] != bound {
+			gl.BindTexture(gl.TEXTURE_2D, groupTex[i])
+			bound = groupTex[i]
+		}
+		m.DrawGroup(i)
 	}
 }
 

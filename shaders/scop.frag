@@ -6,6 +6,10 @@ in vec2 vUV;
 
 uniform int hasNormals;   // 1: use attribute normals; 0: derive flat normals
 uniform vec3 lightDir;    // world space, normalized
+uniform vec3 viewPos;     // camera eye, world space
+uniform vec3 matKd;       // material diffuse (tints the grayscale scheme)
+uniform vec3 matKs;       // material specular
+uniform float matNs;      // specular exponent
 uniform sampler2D tex;
 uniform float mixFactor;    // 0 = flat color, 1 = textured (smoothstepped)
 uniform int wireframePass;  // 1: draw constant-color lines over the model
@@ -29,7 +33,14 @@ void main() {
         : normalize(cross(dFdx(fragPos), dFdy(fragPos)));
     float diff = abs(dot(n, lightDir)) * 0.65 + 0.35;
 
-    vec3 flat_ = vec3(g) * diff;
-    vec3 textured = texture(tex, vUV).rgb * diff;
+    // Blinn-Phong specular from the mtl Ks/Ns.
+    vec3 h = normalize(lightDir + normalize(viewPos - fragPos));
+    vec3 spec = matKs * pow(abs(dot(n, h)), max(matNs, 1.0)) * 0.35;
+
+    // Kd tints the per-face grayscale so mtl colors show while faces stay
+    // distinguishable; scaled by 1/0.64 so the default gray keeps the
+    // original brightness.
+    vec3 flat_ = matKd * (g / 0.64) * diff + spec;
+    vec3 textured = texture(tex, vUV).rgb * diff + spec;
     fragColor = vec4(mix(flat_, textured, mixFactor), 1.0);
 }

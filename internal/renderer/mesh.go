@@ -67,6 +67,13 @@ func (g *GLMesh) DrawAll() {
 	gl.DrawElementsWithOffset(gl.TRIANGLES, g.IndexCount, gl.UNSIGNED_INT, 0)
 }
 
+// DrawGroup draws a single material group's index range.
+func (g *GLMesh) DrawGroup(i int) {
+	grp := &g.Groups[i]
+	gl.DrawElementsWithOffset(gl.TRIANGLES, int32(grp.IndexCount),
+		gl.UNSIGNED_INT, uintptr(grp.IndexOffset*4))
+}
+
 // Center returns the bounding-box center: the model's rotation pivot.
 func (g *GLMesh) Center() mathgl.Vec3 {
 	return g.BBoxMin.Add(g.BBoxMax).Scale(0.5)
