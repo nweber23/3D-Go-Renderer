@@ -1,6 +1,7 @@
 package objparser
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -101,6 +102,66 @@ func TestParseOutOfRangeIndexErrors(t *testing.T) {
 	}
 	if _, err := parseOBJBytes([]byte("v 0 0 0\nf 0 1 1\n"), "."); err == nil {
 		t.Fatal("expected error for zero index")
+	}
+}
+
+func TestParseDeterministic(t *testing.T) {
+	data, err := os.ReadFile("../../models/teapot.obj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := parseOBJBytesSequential(data, "../../models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for run := 0; run < 5; run++ {
+		m, err := parseOBJBytes(data, "../../models")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(m.Vertices) != len(ref.Vertices) || len(m.Indices) != len(ref.Indices) {
+			t.Fatalf("run %d: sizes differ: %d/%d vs %d/%d", run,
+				len(m.Vertices), len(m.Indices), len(ref.Vertices), len(ref.Indices))
+		}
+		for i := range m.Vertices {
+			if m.Vertices[i] != ref.Vertices[i] {
+				t.Fatalf("run %d: vertex %d differs: %v vs %v", run, i, m.Vertices[i], ref.Vertices[i])
+			}
+		}
+		for i := range m.Indices {
+			if m.Indices[i] != ref.Indices[i] {
+				t.Fatalf("run %d: index %d differs", run, i)
+			}
+		}
+		if len(m.Groups) != len(ref.Groups) {
+			t.Fatalf("run %d: group counts differ", run)
+		}
+	}
+}
+
+func BenchmarkParseTeapot(b *testing.B) {
+	data, err := os.ReadFile("../../models/teapot.obj")
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, err := parseOBJBytes(data, "../../models"); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkParseTeapotSequential(b *testing.B) {
+	data, err := os.ReadFile("../../models/teapot.obj")
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, err := parseOBJBytesSequential(data, "../../models"); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

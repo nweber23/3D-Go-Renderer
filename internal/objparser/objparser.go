@@ -88,29 +88,16 @@ func warn(line int, format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "objparser: line %d: "+format+"\n", append([]any{line}, args...)...)
 }
 
-func parseOBJBytes(data []byte, dir string) (*Mesh, error) {
-	b := &builder{
+func newBuilder() *builder {
+	return &builder{
 		dedup:     make(map[[3]int32]uint32),
 		materials: make(map[string]Material),
 		buckets:   make(map[string][]uint32),
 	}
+}
 
-	lineNo := 0
-	for len(data) > 0 {
-		lineNo++
-		var line string
-		if i := indexByte(data, '\n'); i >= 0 {
-			line = string(data[:i])
-			data = data[i+1:]
-		} else {
-			line = string(data)
-			data = nil
-		}
-		if err := b.parseLine(strings.TrimSpace(line), lineNo, dir); err != nil {
-			return nil, err
-		}
-	}
-
+// finish assembles the final mesh once every line has been consumed.
+func (b *builder) finish() (*Mesh, error) {
 	b.finishGroups()
 	if len(b.mesh.Indices) == 0 {
 		return nil, fmt.Errorf("objparser: no renderable faces found")
@@ -279,6 +266,12 @@ func resolveIndex(s string, count, lineNo int, kind string) (int32, error) {
 	if err != nil {
 		return 0, fmt.Errorf("objparser: line %d: bad %s index %q", lineNo, kind, s)
 	}
+	return resolveRaw(n, count, lineNo, kind)
+}
+
+// resolveRaw turns a 1-based (possibly negative/relative) obj index into a
+// 0-based slice index.
+func resolveRaw(n, count, lineNo int, kind string) (int32, error) {
 	switch {
 	case n > 0 && n <= count:
 		return int32(n - 1), nil
