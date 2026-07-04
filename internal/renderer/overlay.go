@@ -2,6 +2,7 @@ package renderer
 
 import (
 	"fmt"
+	"unsafe"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 )
@@ -121,7 +122,9 @@ func (o *Overlay) Draw(text []byte, fbW, fbH int) {
 
 	gl.BindVertexArray(o.vao)
 	gl.BindBuffer(gl.ARRAY_BUFFER, o.vbo)
-	gl.BufferSubData(gl.ARRAY_BUFFER, 0, len(o.verts)*4, gl.Ptr(o.verts))
+	// unsafe.Pointer instead of gl.Ptr: the latter goes through reflect and
+	// boxes the slice, allocating every frame.
+	gl.BufferSubData(gl.ARRAY_BUFFER, 0, len(o.verts)*4, unsafe.Pointer(&o.verts[0]))
 	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(o.verts)/4))
 	gl.BindVertexArray(0)
 

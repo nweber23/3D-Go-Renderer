@@ -140,6 +140,12 @@ func main() {
 		fpsText   = make([]byte, 0, 32) // reused: no per-frame allocations
 		fpsFrames int
 		fpsAccum  float64
+
+		pv         mathgl.Mat4
+		planes     [6]mathgl.Vec4
+		culled     int
+		memStats   runtime.MemStats
+		lastAllocs uint64
 	)
 	const fadeDur = 0.4 // seconds for the color <-> texture crossfade
 
@@ -249,10 +255,15 @@ func main() {
 			fpsText = strconv.AppendFloat(fpsText, avgMs, 'f', 2, 64)
 			fpsText = append(fpsText, "ms"...)
 			if *debug {
-				log.Printf("frames=%d avg=%.3fms fps=%d", fpsFrames, avgMs, fps)
+				runtime.ReadMemStats(&memStats)
+				allocsPerFrame := float64(memStats.Mallocs-lastAllocs) / float64(fpsFrames)
+				lastAllocs = memStats.Mallocs
+				log.Printf("frames=%d avg=%.3fms fps=%d culled=%d allocs/frame=%.2f",
+					fpsFrames, avgMs, fps, culled, allocsPerFrame)
 			}
 			fpsFrames = 0
 			fpsAccum = 0
+			culled = 0
 		}
 
 		// --- render ----------------------------------------------------
@@ -267,6 +278,15 @@ func main() {
 		model = mathgl.Translate(offset).
 			Mul(fromCenter).Mul(mathgl.RotateY(angle)).Mul(toCenter)
 
+		// Frustum-cull the model's world-space bounding box.
+		pv = proj.Mul(view)
+		renderer.ExtractFrustum(&pv, &planes)
+		wmin, wmax := worldAABB(&model, glMesh.BBoxMin, glMesh.BBoxMax)
+		visible := renderer.AABBVisible(&planes, wmin, wmax)
+		if !visible {
+			culled++
+		}
+
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 		shader.Use()
 		shader.SetMat4("model", &model)
@@ -280,7 +300,9 @@ func main() {
 		gl.ActiveTexture(gl.TEXTURE0)
 
 		glMesh.Bind()
-		if wireframe {
+		if !visible {
+			// Nothing to draw; the box is entirely outside the frustum.
+		} else if wireframe {
 			// Solid pass pushed back slightly so the line pass on top
 			// cannot z-fight with it.
 			gl.Enable(gl.POLYGON_OFFSET_FILL)
@@ -320,6 +342,39 @@ func drawGroups(shader *renderer.Shader, m *renderer.GLMesh, groupTex []uint32) 
 		}
 		m.DrawGroup(i)
 	}
+}
+
+// worldAABB transforms a local-space bounding box through the model matrix
+// and returns the world-space box enclosing all eight corners.
+func worldAABB(model *mathgl.Mat4, bmin, bmax mathgl.Vec3) (mathgl.Vec3, mathgl.Vec3) {
+	var wmin, wmax mathgl.Vec3
+	for c := 0; c < 8; c++ {
+		corner := mathgl.Vec4{bmin[0], bmin[1], bmin[2], 1}
+		if c&1 != 0 {
+			corner[0] = bmax[0]
+		}
+		if c&2 != 0 {
+			corner[1] = bmax[1]
+		}
+		if c&4 != 0 {
+			corner[2] = bmax[2]
+		}
+		w := model.MulVec4(corner)
+		if c == 0 {
+			wmin = mathgl.Vec3{w[0], w[1], w[2]}
+			wmax = wmin
+			continue
+		}
+		for a := 0; a < 3; a++ {
+			if w[a] < wmin[a] {
+				wmin[a] = w[a]
+			}
+			if w[a] > wmax[a] {
+				wmax[a] = w[a]
+			}
+		}
+	}
+	return wmin, wmax
 }
 
 func usage() {

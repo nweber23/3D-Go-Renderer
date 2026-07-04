@@ -16,6 +16,10 @@ type Window struct {
 	winX, winY, winW, winH int
 	fullscreen             bool
 	vsync                  bool
+
+	// Framebuffer size cached via callback: querying GLFW each frame
+	// allocates (cgo out-params escape to the heap).
+	fbW, fbH int
 }
 
 // New initializes GLFW, creates a window with an OpenGL 4.1 core profile
@@ -43,7 +47,13 @@ func New(width, height int, title string) (*Window, error) {
 		glfw.Terminate()
 		return nil, fmt.Errorf("gl init: %w", err)
 	}
-	return &Window{handle: handle}, nil
+
+	w := &Window{handle: handle}
+	w.fbW, w.fbH = handle.GetFramebufferSize()
+	handle.SetFramebufferSizeCallback(func(_ *glfw.Window, fw, fh int) {
+		w.fbW, w.fbH = fw, fh
+	})
+	return w, nil
 }
 
 // Handle exposes the underlying GLFW window for callback registration.
@@ -54,9 +64,10 @@ func (w *Window) GLVersion() string {
 	return gl.GoStr(gl.GetString(gl.VERSION))
 }
 
-// FramebufferSize returns the current framebuffer size in pixels.
+// FramebufferSize returns the current framebuffer size in pixels (cached,
+// allocation-free).
 func (w *Window) FramebufferSize() (int, int) {
-	return w.handle.GetFramebufferSize()
+	return w.fbW, w.fbH
 }
 
 func (w *Window) ShouldClose() bool { return w.handle.ShouldClose() }
