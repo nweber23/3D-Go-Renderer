@@ -9,3 +9,9 @@ var BasicVert string
 
 //go:embed basic.frag
 var BasicFrag string
+
+//go:embed scop.vert
+var ScopVert string
+
+//go:embed scop.frag
+var ScopFrag string

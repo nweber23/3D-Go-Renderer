@@ -8,9 +8,10 @@ import (
 	"github.com/go-gl/gl/v4.1-core/gl"
 )
 
-// Shader is a linked GLSL program.
+// Shader is a linked GLSL program with cached uniform locations.
 type Shader struct {
-	ID uint32
+	ID   uint32
+	locs map[string]int32
 }
 
 // NewShader compiles the given vertex and fragment sources and links them
@@ -43,7 +44,9 @@ func NewShader(vertSrc, fragSrc string) (*Shader, error) {
 		gl.DeleteProgram(prog)
 		return nil, fmt.Errorf("link program: %s", log)
 	}
-	return &Shader{ID: prog}, nil
+	s := &Shader{ID: prog}
+	s.initUniforms()
+	return s, nil
 }
 
 func compile(src string, kind uint32, name string) (uint32, error) {
