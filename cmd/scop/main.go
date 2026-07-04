@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"runtime"
+	"strconv"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -67,9 +68,12 @@ func main() {
 
 	input := window.Attach(win.Handle())
 	win.SetVSync(*vsync)
-	_ = debug // consumed by the frame-timing overlay
 
 	shader, err := renderer.NewShader(shaders.ScopVert, shaders.ScopFrag)
+	if err != nil {
+		log.Fatalf("scop: %v", err)
+	}
+	overlay, err := renderer.NewOverlay()
 	if err != nil {
 		log.Fatalf("scop: %v", err)
 	}
@@ -131,6 +135,11 @@ func main() {
 		mixFactor float32 // eased blend position, 0..1
 		mixTarget float32 // 0 = flat color, 1 = textured
 		wireframe = *wireframeStart
+
+		showFPS   = true
+		fpsText   = make([]byte, 0, 32) // reused: no per-frame allocations
+		fpsFrames int
+		fpsAccum  float64
 	)
 	const fadeDur = 0.4 // seconds for the color <-> texture crossfade
 
@@ -163,6 +172,9 @@ func main() {
 		}
 		if input.Pressed(glfw.KeyF) {
 			wireframe = !wireframe
+		}
+		if input.Pressed(glfw.KeyF1) {
+			showFPS = !showFPS
 		}
 		if input.Pressed(glfw.KeyF2) {
 			win.SetVSync(!win.VSync())
@@ -224,6 +236,25 @@ func main() {
 		}
 		smoothMix := mixFactor * mixFactor * (3 - 2*mixFactor)
 
+		// Aggregate frame timings; refresh the readout twice a second.
+		fpsFrames++
+		fpsAccum += float64(dt)
+		if fpsAccum >= 0.5 {
+			avgMs := fpsAccum / float64(fpsFrames) * 1000
+			fps := int64(float64(fpsFrames)/fpsAccum + 0.5)
+			fpsText = fpsText[:0]
+			fpsText = append(fpsText, "FPS "...)
+			fpsText = strconv.AppendInt(fpsText, fps, 10)
+			fpsText = append(fpsText, " / "...)
+			fpsText = strconv.AppendFloat(fpsText, avgMs, 'f', 2, 64)
+			fpsText = append(fpsText, "ms"...)
+			if *debug {
+				log.Printf("frames=%d avg=%.3fms fps=%d", fpsFrames, avgMs, fps)
+			}
+			fpsFrames = 0
+			fpsAccum = 0
+		}
+
 		// --- render ----------------------------------------------------
 		fbW, fbH := win.FramebufferSize()
 		gl.Viewport(0, 0, int32(fbW), int32(fbH))
@@ -263,6 +294,10 @@ func main() {
 			gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL)
 		} else {
 			drawGroups(shader, glMesh, groupTex)
+		}
+
+		if showFPS {
+			overlay.Draw(fpsText, fbW, fbH)
 		}
 
 		win.SwapAndPoll()
