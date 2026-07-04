@@ -9,11 +9,17 @@ import (
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
 
+	"scop/internal/camera"
 	"scop/internal/mathgl"
 	"scop/internal/objparser"
 	"scop/internal/renderer"
 	"scop/internal/window"
 	"scop/shaders"
+)
+
+const (
+	orbitSensitivity = 0.005 // radians per pixel dragged
+	lookSensitivity  = 0.002 // radians per pixel in fly mode
 )
 
 func init() {
@@ -53,11 +59,7 @@ func main() {
 	defer win.Terminate()
 	log.Printf("OpenGL %s", win.GLVersion())
 
-	win.Handle().SetKeyCallback(func(w *glfw.Window, key glfw.Key, _ int, action glfw.Action, _ glfw.ModifierKey) {
-		if key == glfw.KeyEscape && action == glfw.Press {
-			w.SetShouldClose(true)
-		}
-	})
+	input := window.Attach(win.Handle())
 
 	shader, err := renderer.NewShader(shaders.ScopVert, shaders.ScopFrag)
 	if err != nil {
@@ -66,7 +68,8 @@ func main() {
 
 	glMesh := renderer.UploadMesh(mesh)
 	center := glMesh.Center()
-	dist := 2.5 * glMesh.MaxExtent()
+	maxExtent := glMesh.MaxExtent()
+	cam := camera.New(center, 2.5*maxExtent)
 
 	gl.Enable(gl.DEPTH_TEST)
 	gl.ClearColor(0.12, 0.12, 0.14, 1)
@@ -74,6 +77,7 @@ func main() {
 	// All per-frame state lives outside the loop: zero steady-state allocs.
 	var (
 		angle      float32
+		offset     mathgl.Vec3 // object translation from IJKL/arrows/UO
 		model      mathgl.Mat4
 		view       mathgl.Mat4
 		proj       mathgl.Mat4
@@ -81,9 +85,8 @@ func main() {
 		fromCenter = mathgl.Translate(center)
 		lightDir   = mathgl.Vec3{0.4, 0.7, 0.6}.Normalize()
 		lastTime   = glfw.GetTime()
+		moveSpeed  = maxExtent * 0.5 // object translation units per second
 	)
-	eye := center.Add(mathgl.Vec3{0, 0, dist})
-	view = mathgl.LookAt(eye, center, mathgl.Vec3{0, 1, 0})
 
 	hasNormals := int32(0)
 	if glMesh.HasNormals {
@@ -96,13 +99,67 @@ func main() {
 		lastTime = now
 		angle += float32(*speed) * dt
 
+		// --- input -----------------------------------------------------
+		if input.Pressed(glfw.KeyEscape) {
+			win.Handle().SetShouldClose(true)
+		}
+		if input.Pressed(glfw.KeyC) {
+			cam.ToggleMode()
+			if cam.Mode() == camera.Fly {
+				win.Handle().SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
+			} else {
+				win.Handle().SetInputMode(glfw.CursorMode, glfw.CursorNormal)
+			}
+			input.ResetMouse()
+		}
+		if input.Pressed(glfw.KeyR) {
+			cam.Reset()
+			offset = mathgl.Vec3{}
+			angle = 0
+			win.Handle().SetInputMode(glfw.CursorMode, glfw.CursorNormal)
+			input.ResetMouse()
+		}
+
+		dx, dy := input.MouseDelta()
+		if cam.Mode() == camera.Fly {
+			cam.Look(-dx*lookSensitivity, -dy*lookSensitivity)
+			cam.Move(
+				input.Axis(glfw.KeyW, glfw.KeyS),
+				input.Axis(glfw.KeyD, glfw.KeyA),
+				input.Axis(glfw.KeySpace, glfw.KeyLeftControl),
+				dt,
+			)
+		} else {
+			switch {
+			case input.Panning():
+				cam.Pan(dx, dy)
+			case input.Dragging():
+				cam.Orbit(-dx*orbitSensitivity, -dy*orbitSensitivity)
+			}
+			if s := input.Scroll(); s != 0 {
+				cam.Zoom(s)
+			}
+		}
+
+		// Object translation on all three axes, both directions.
+		step := moveSpeed * dt
+		offset[0] += (input.Axis(glfw.KeyRight, glfw.KeyLeft) + input.Axis(glfw.KeyL, glfw.KeyJ)) * step
+		offset[1] += (input.Axis(glfw.KeyUp, glfw.KeyDown) + input.Axis(glfw.KeyI, glfw.KeyK)) * step
+		offset[2] += input.Axis(glfw.KeyU, glfw.KeyO) * step
+
+		input.EndFrame()
+
+		// --- render ----------------------------------------------------
 		fbW, fbH := win.FramebufferSize()
 		gl.Viewport(0, 0, int32(fbW), int32(fbH))
 		aspect := float32(fbW) / float32(max(fbH, 1))
-		proj = mathgl.Perspective(float32(math.Pi/4), aspect, 0.1, 100*glMesh.MaxExtent())
+		proj = mathgl.Perspective(float32(math.Pi/4), aspect, 0.01*maxExtent, 100*maxExtent)
+		view = cam.View()
 
-		// Spin around the model's own central vertical axis.
-		model = fromCenter.Mul(mathgl.RotateY(angle)).Mul(toCenter)
+		// Spin around the model's own central vertical axis, then apply
+		// the user translation.
+		model = mathgl.Translate(offset).
+			Mul(fromCenter).Mul(mathgl.RotateY(angle)).Mul(toCenter)
 
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 		shader.Use()
