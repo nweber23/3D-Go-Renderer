@@ -33,6 +33,7 @@ func main() {
 	width := flag.Int("width", 1280, "window width")
 	height := flag.Int("height", 720, "window height")
 	uvFlag := flag.String("uv", "auto", "uv generation: auto|planar|cylindrical|spherical")
+	wireframeStart := flag.Bool("wireframe-start", false, "start with the wireframe overlay enabled")
 	flag.Parse()
 
 	modelPath := "models/42.obj"
@@ -108,6 +109,7 @@ func main() {
 
 		mixFactor float32 // eased blend position, 0..1
 		mixTarget float32 // 0 = flat color, 1 = textured
+		wireframe = *wireframeStart
 	)
 	const fadeDur = 0.4 // seconds for the color <-> texture crossfade
 
@@ -137,6 +139,9 @@ func main() {
 		}
 		if input.Pressed(glfw.KeyT) && texture != 0 {
 			mixTarget = 1 - mixTarget
+		}
+		if input.Pressed(glfw.KeyF) {
+			wireframe = !wireframe
 		}
 		if input.Pressed(glfw.KeyR) {
 			cam.Reset()
@@ -209,7 +214,23 @@ func main() {
 		gl.BindTexture(gl.TEXTURE_2D, texture)
 
 		glMesh.Bind()
-		glMesh.DrawAll()
+		if wireframe {
+			// Solid pass pushed back slightly so the line pass on top
+			// cannot z-fight with it.
+			gl.Enable(gl.POLYGON_OFFSET_FILL)
+			gl.PolygonOffset(1, 1)
+			shader.SetInt("wireframePass", 0)
+			glMesh.DrawAll()
+			gl.Disable(gl.POLYGON_OFFSET_FILL)
+
+			gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE)
+			shader.SetInt("wireframePass", 1)
+			glMesh.DrawAll()
+			gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL)
+		} else {
+			shader.SetInt("wireframePass", 0)
+			glMesh.DrawAll()
+		}
 
 		win.SwapAndPoll()
 	}
