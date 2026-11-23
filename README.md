@@ -8,7 +8,16 @@ overlay. The only external dependencies are the raw OpenGL bindings
 (`go-gl/gl`) and window/event management (`go-gl/glfw`); image decoding
 uses Go's standard library.
 
-![default texture](models/default_texture.png)
+![42 logo crossfading between face colors and texture](docs/media/logo_texture.gif)
+
+| | | |
+|---|---|---|
+| ![wireframe overlay](docs/media/teapot_wire.gif) | ![uv checker](docs/media/teapot_uv.gif) | ![normals](docs/media/teapot_normals.gif) |
+| raw teapot + wireframe (`F`) | UV checker (`N`): texture is not stretched | flat normals view (`N`) |
+| ![smooth normals](docs/media/teapot_smooth.gif) | ![Porta Nigra](docs/media/porta_nigra.gif) | ![qilin](docs/media/qilin.gif) |
+| smooth normals (`M`), generated for a vn-less mesh | 82k-triangle scan, mtl texture | 677k-triangle scan, `-up z` |
+
+Regenerate the clips with `make gifs` (needs a display and `ffmpeg`).
 
 ## Build & run
 
@@ -27,7 +36,7 @@ make re         # full rebuild
 Direct invocation:
 
 ```sh
-./scop [flags] [model.obj]
+./scop [flags] [model.obj ...]
 ```
 
 | Flag | Default | Meaning |
@@ -37,13 +46,18 @@ Direct invocation:
 | `-width`, `-height` | `1280`, `720` | initial window size |
 | `-uv mode` | `auto` | UV generation: `auto`, `planar`, `cylindrical`, `spherical` |
 | `-vsync` | `true` | synchronize buffer swaps |
+| `-up x\|y\|z` | `y` | model's up axis; `-up z` stands Z-up scans (e.g. the qilin) upright |
+| `-smooth` | `false` | start with smooth vertex normals (generated if the model has no `vn`) |
+| `-shade n` | `0` | start shading mode: 0 faces, 1 normals, 2 UV checker |
+| `-record dir` | — | write a scripted demo as PNG frames at a fixed 30 fps step, then exit |
+| `-frames n` | `120` | frame count for `-record` |
 | `-debug` | `false` | log frame timings + allocs/frame to stdout |
 | `-wireframe-start` | `false` | start with wireframe overlay on |
 
 ## Controls
 
 | Input | Action |
-|---|---|
+|---|---|x
 | mouse drag | orbit camera around the model |
 | shift-drag / middle-drag | pan |
 | scroll | zoom |
@@ -53,6 +67,12 @@ Direct invocation:
 | `U` / `O` | translate object on Z |
 | `T` | toggle flat color ↔ texture (0.4 s smooth crossfade) |
 | `F` | toggle wireframe overlay |
+| `N` | cycle shading: faces / normals / UV checker |
+| `M` | toggle smooth / flat normals (smooth normals are generated on first use) |
+| `Tab` | next model when several are given on the command line |
+| drop a `.obj` on the window | load it at runtime |
+| `P` | pause / resume rotation |
+| `B` | cycle background color |
 | `R` | reset camera and object transforms |
 | `F1` | toggle FPS / frame-time overlay |
 | `F2` | toggle VSync |
