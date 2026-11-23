@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 
@@ -37,14 +39,20 @@ func main() {
 	uvFlag := flag.String("uv", "auto", "uv generation: auto|planar|cylindrical|spherical")
 	wireframeStart := flag.Bool("wireframe-start", false, "start with the wireframe overlay enabled")
 	vsync := flag.Bool("vsync", true, "synchronize buffer swaps with the display")
+	recordDir := flag.String("record", "", "dump a scripted demo as PNG frames into this dir, then exit")
+	recordFrames := flag.Int("frames", 120, "frame count for -record (fixed 30 fps timestep)")
+	up := flag.String("up", "y", "model's up axis: x|y|z (rotates Z-up scans upright)")
+	smoothStart := flag.Bool("smooth", false, "start with smooth (vertex) normals, generating them if the model has none")
+	shadeStart := flag.Int("shade", 0, "start shading mode: 0 faces, 1 normals, 2 uv checker")
 	debug := flag.Bool("debug", false, "log frame timings to stdout")
 	flag.Usage = usage
 	flag.Parse()
 
-	modelPath := "models/42.obj"
-	if flag.NArg() > 0 {
-		modelPath = flag.Arg(0)
+	models := flag.Args() // Tab cycles through these; dropped files are appended
+	if len(models) == 0 {
+		models = []string{"models/42.obj"}
 	}
+	modelPath := models[0]
 
 	uvMode, err := objparser.ParseUVMode(*uvFlag)
 	if err != nil {
@@ -78,11 +86,6 @@ func main() {
 		log.Fatalf("scop: %v", err)
 	}
 
-	glMesh := renderer.UploadMesh(mesh)
-	center := glMesh.Center()
-	maxExtent := glMesh.MaxExtent()
-	cam := camera.New(center, 2.5*maxExtent)
-
 	// Texture priority per group: -texture flag > mtl map_Kd > generated
 	// default. Loaded once here; groups arrive pre-sorted by texture so the
 	// draw loop changes bindings as rarely as possible.
@@ -105,14 +108,15 @@ func main() {
 			fallbackTex = t
 		}
 	}
-	groupTex := make([]uint32, len(mesh.Groups))
-	for i, g := range mesh.Groups {
-		groupTex[i] = fallbackTex
-		if *texturePath == "" && g.Material.MapKd != "" {
-			if t := loadTex(g.Material.MapKd); t != 0 {
-				groupTex[i] = t
-			}
-		}
+	upRot := mathgl.Identity()
+	switch *up {
+	case "y":
+	case "z":
+		upRot = mathgl.RotateX(-math.Pi / 2)
+	case "x":
+		upRot = mathgl.RotateZ(math.Pi / 2)
+	default:
+		log.Fatalf("scop: -up must be x, y or z, got %q", *up)
 	}
 	texture := fallbackTex // any texture available enables the T toggle
 
@@ -126,15 +130,26 @@ func main() {
 		model      mathgl.Mat4
 		view       mathgl.Mat4
 		proj       mathgl.Mat4
-		toCenter   = mathgl.Translate(center.Scale(-1))
-		fromCenter = mathgl.Translate(center)
+		toCenter   mathgl.Mat4
+		fromCenter mathgl.Mat4
 		lightDir   = mathgl.Vec3{0.4, 0.7, 0.6}.Normalize()
 		lastTime   = glfw.GetTime()
-		moveSpeed  = maxExtent * 0.5 // object translation units per second
+		moveSpeed  float32 // object translation units per second
+		maxExtent  float32
+		glMesh     *renderer.GLMesh
+		curMesh    *objparser.Mesh
+		groupTex   []uint32
+		cam        *camera.Camera
+		smooth     bool // use vertex normals (true) or derivative flat normals
+		modelIdx   int
 
 		mixFactor float32 // eased blend position, 0..1
 		mixTarget float32 // 0 = flat color, 1 = textured
 		wireframe = *wireframeStart
+		paused    bool
+		shadeMode = int32(*shadeStart % 3)
+		bgIdx     int
+		frameNo   int
 
 		showFPS   = true
 		fpsText   = make([]byte, 0, 32) // reused: no per-frame allocations
@@ -147,18 +162,86 @@ func main() {
 		memStats   runtime.MemStats
 		lastAllocs uint64
 	)
+	backgrounds := [...][3]float32{{0.12, 0.12, 0.14}, {0.02, 0.02, 0.03}, {0.9, 0.9, 0.92}, {0.1, 0.2, 0.35}}
+	if *recordDir != "" {
+		if err := os.MkdirAll(*recordDir, 0o755); err != nil {
+			log.Fatalf("scop: %v", err)
+		}
+	}
 	const fadeDur = 0.4 // seconds for the color <-> texture crossfade
 
-	hasNormals := int32(0)
-	if glMesh.HasNormals {
-		hasNormals = 1
+	var enableSmooth func()
+	// load uploads a parsed mesh and resets everything model-specific.
+	load := func(m *objparser.Mesh) {
+		if glMesh != nil {
+			glMesh.Delete()
+		}
+		curMesh = m
+		glMesh = renderer.UploadMesh(m)
+		center := glMesh.Center()
+		maxExtent = glMesh.MaxExtent()
+		toCenter = mathgl.Translate(center.Scale(-1))
+		fromCenter = mathgl.Translate(center)
+		moveSpeed = maxExtent * 0.5
+		cam = camera.New(center, 1.4*maxExtent)
+		offset, angle = mathgl.Vec3{}, 0
+		smooth = m.HasNormals
+		groupTex = make([]uint32, len(m.Groups))
+		for i, g := range m.Groups {
+			groupTex[i] = fallbackTex
+			if *texturePath == "" && g.Material.MapKd != "" {
+				if t := loadTex(g.Material.MapKd); t != 0 {
+					groupTex[i] = t
+				}
+			}
+		}
+		win.Handle().SetTitle("scop - " + filepath.Base(modelPath))
 	}
+	// switchTo parses a model file and swaps it in; failures keep the old one.
+	switchTo := func(path string) {
+		m, err := objparser.ParseOBJ(path)
+		if err != nil {
+			log.Printf("scop: %v", err)
+			return
+		}
+		objparser.GenerateUVs(m, uvMode)
+		log.Printf("%s: %d vertices, %d triangles, %d group(s)",
+			path, len(m.Vertices), len(m.Indices)/3, len(m.Groups))
+		modelPath = path
+		load(m)
+		lastTime = glfw.GetTime() // do not count the load as a frame
+	}
+	// enableSmooth builds vertex normals for a vn-less mesh and re-uploads it.
+	enableSmooth = func() {
+		objparser.SmoothNormals(curMesh)
+		glMesh.Delete()
+		glMesh = renderer.UploadMesh(curMesh)
+		smooth = true
+	}
+	load(mesh)
+	if *smoothStart {
+		enableSmooth()
+	}
+	var dropped []string
+	win.Handle().SetDropCallback(func(_ *glfw.Window, names []string) {
+		dropped = append(dropped, names...)
+	})
 
 	for !win.ShouldClose() {
 		now := glfw.GetTime()
 		dt := float32(now - lastTime)
 		lastTime = now
-		angle += float32(*speed) * dt
+		if *recordDir != "" {
+			dt = 1.0 / 30 // deterministic timestep
+			// Scripted demo: fade to texture at 1/3, back to color at 2/3.
+			switch frameNo {
+			case *recordFrames / 3, 2 * *recordFrames / 3:
+				mixTarget = 1 - mixTarget
+			}
+		}
+		if !paused {
+			angle += float32(*speed) * dt
+		}
 
 		// --- input -----------------------------------------------------
 		if input.Pressed(glfw.KeyEscape) {
@@ -175,6 +258,34 @@ func main() {
 		}
 		if input.Pressed(glfw.KeyT) && texture != 0 {
 			mixTarget = 1 - mixTarget
+		}
+		if input.Pressed(glfw.KeyTab) && len(models) > 1 {
+			modelIdx = (modelIdx + 1) % len(models)
+			switchTo(models[modelIdx])
+		}
+		for _, d := range dropped {
+			models = append(models, d)
+			modelIdx = len(models) - 1
+			switchTo(d)
+		}
+		dropped = dropped[:0]
+		if input.Pressed(glfw.KeyM) {
+			if !curMesh.HasNormals {
+				enableSmooth()
+			} else {
+				smooth = !smooth
+			}
+		}
+		if input.Pressed(glfw.KeyP) {
+			paused = !paused
+		}
+		if input.Pressed(glfw.KeyN) {
+			shadeMode = (shadeMode + 1) % 3
+		}
+		if input.Pressed(glfw.KeyB) {
+			bgIdx = (bgIdx + 1) % len(backgrounds)
+			bg := backgrounds[bgIdx]
+			gl.ClearColor(bg[0], bg[1], bg[2], 1)
 		}
 		if input.Pressed(glfw.KeyF) {
 			wireframe = !wireframe
@@ -276,7 +387,7 @@ func main() {
 		// Spin around the model's own central vertical axis, then apply
 		// the user translation.
 		model = mathgl.Translate(offset).
-			Mul(fromCenter).Mul(mathgl.RotateY(angle)).Mul(toCenter)
+			Mul(fromCenter).Mul(mathgl.RotateY(angle)).Mul(upRot).Mul(toCenter)
 
 		// Frustum-cull the model's world-space bounding box.
 		pv = proj.Mul(view)
@@ -292,11 +403,12 @@ func main() {
 		shader.SetMat4("model", &model)
 		shader.SetMat4("view", &view)
 		shader.SetMat4("proj", &proj)
-		shader.SetInt("hasNormals", hasNormals)
+		shader.SetInt("hasNormals", b2i(smooth))
 		shader.SetVec3("lightDir", lightDir)
 		shader.SetVec3("viewPos", cam.Eye())
 		shader.SetFloat("mixFactor", smoothMix)
 		shader.SetInt("tex", 0)
+		shader.SetInt("shadeMode", shadeMode)
 		gl.ActiveTexture(gl.TEXTURE0)
 
 		glMesh.Bind()
@@ -318,10 +430,18 @@ func main() {
 			drawGroups(shader, glMesh, groupTex)
 		}
 
-		if showFPS {
+		if showFPS && *recordDir == "" {
 			overlay.Draw(fpsText, fbW, fbH)
 		}
 
+		if *recordDir != "" {
+			if _, err := renderer.ScreenshotTo(fbW, fbH, filepath.Join(*recordDir, fmt.Sprintf("f%04d.png", frameNo))); err != nil {
+				log.Fatalf("scop: %v", err)
+			}
+			if frameNo++; frameNo >= *recordFrames {
+				return
+			}
+		}
 		win.SwapAndPoll()
 	}
 }
@@ -395,6 +515,11 @@ Controls:
   arrows, IJKL, U/O    translate object on X/Y/Z
   T                    toggle color <-> texture (crossfade)
   F                    toggle wireframe overlay
+  N                    cycle shading: faces / normals / uv checker
+  M                    toggle smooth / flat normals
+  Tab                  next model (several can be given; drop files onto the window)
+  P                    pause / resume rotation
+  B                    cycle background color
   R                    reset view and object transforms
   F1                   toggle FPS overlay
   F2                   toggle vsync
@@ -402,6 +527,13 @@ Controls:
   F12                  screenshot (PNG)
   Esc                  quit
 `)
+}
+
+func b2i(b bool) int32 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func minf(a, b float32) float32 {
