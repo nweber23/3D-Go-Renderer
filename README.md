@@ -4,7 +4,7 @@
 
 **A from-scratch `.obj` renderer in Go + OpenGL 4.1** — 42 school SCOP project
 
-![Go](https://img.shields.io/badge/Go-1.21%2B-00ADD8?logo=go&logoColor=white)
+![Go](https://img.shields.io/badge/Go-1.27%2B-00ADD8?logo=go&logoColor=white)
 ![OpenGL](https://img.shields.io/badge/OpenGL-4.1%20core-5586A4)
 ![License](https://img.shields.io/github/license/nweber23/3D-Go-Renderer)
 
@@ -60,7 +60,7 @@ dependencies are the raw OpenGL bindings (`go-gl/gl`) and window/events
 
 ## Build & run
 
-Requires Go ≥ 1.21, a C toolchain, and GLFW build dependencies
+Requires Go ≥ 1.27, a C toolchain, and GLFW build dependencies
 (`libgl1-mesa-dev xorg-dev` on Debian/Ubuntu).
 
 ```sh
