@@ -17,6 +17,11 @@ var shotBuf []byte
 // Screenshot reads the current framebuffer and writes it to a timestamped
 // PNG (scop_20060102_150405.png) in the working directory.
 func Screenshot(fbW, fbH int) (string, error) {
+	return ScreenshotTo(fbW, fbH, fmt.Sprintf("scop_%s.png", time.Now().Format("20060102_150405")))
+}
+
+// ScreenshotTo is Screenshot with an explicit output path.
+func ScreenshotTo(fbW, fbH int, name string) (string, error) {
 	n := fbW * fbH * 4
 	if cap(shotBuf) < n {
 		shotBuf = make([]byte, n)
@@ -37,7 +42,6 @@ func Screenshot(fbW, fbH int) (string, error) {
 		img.Pix[i] = 255 // discard alpha: the framebuffer is opaque
 	}
 
-	name := fmt.Sprintf("scop_%s.png", time.Now().Format("20060102_150405"))
 	f, err := os.Create(name)
 	if err != nil {
 		return "", fmt.Errorf("screenshot: %w", err)

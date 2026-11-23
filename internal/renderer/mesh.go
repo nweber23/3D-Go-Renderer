@@ -92,3 +92,10 @@ func (g *GLMesh) MaxExtent() float32 {
 	}
 	return m
 }
+
+// Delete frees the mesh's GPU buffers.
+func (g *GLMesh) Delete() {
+	gl.DeleteBuffers(1, &g.vbo)
+	gl.DeleteBuffers(1, &g.ebo)
+	gl.DeleteVertexArrays(1, &g.vao)
+}
