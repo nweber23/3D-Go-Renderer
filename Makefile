@@ -15,6 +15,9 @@ test:
 	$(GO) vet ./...
 	$(GO) test -race ./...
 
+gifs: build
+	./docs/record.sh
+
 bench:
 	$(GO) test -bench=. -benchmem ./internal/mathgl/ ./internal/objparser/
 
@@ -26,4 +29,4 @@ fclean: clean
 
 re: fclean all
 
-.PHONY: all build run test bench clean fclean re
+.PHONY: all build run test gifs bench clean fclean re
