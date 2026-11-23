@@ -1,23 +1,62 @@
+<div align="center">
+
 # scop
 
-A 3D `.obj` renderer written in Go against OpenGL 4.1 core, built for the
-42 school SCOP project. Everything domain-specific is implemented from
-scratch: the `.obj`/`.mtl` parser, the vector/matrix math, ear-clipping
-triangulation, automatic UV generation, shader compilation, and the text
-overlay. The only external dependencies are the raw OpenGL bindings
-(`go-gl/gl`) and window/event management (`go-gl/glfw`); image decoding
-uses Go's standard library.
+**A from-scratch `.obj` renderer in Go + OpenGL 4.1** — 42 school SCOP project
 
-![42 logo crossfading between face colors and texture](docs/media/logo_texture.gif)
+![Go](https://img.shields.io/badge/Go-1.21%2B-00ADD8?logo=go&logoColor=white)
+![OpenGL](https://img.shields.io/badge/OpenGL-4.1%20core-5586A4)
+![License](https://img.shields.io/github/license/nweber23/3D-Go-Renderer)
 
-| | | |
-|---|---|---|
-| ![wireframe overlay](docs/media/teapot_wire.gif) | ![uv checker](docs/media/teapot_uv.gif) | ![normals](docs/media/teapot_normals.gif) |
-| raw teapot + wireframe (`F`) | UV checker (`N`): texture is not stretched | flat normals view (`N`) |
-| ![smooth normals](docs/media/teapot_smooth.gif) | ![Porta Nigra](docs/media/porta_nigra.gif) | ![qilin](docs/media/qilin.gif) |
-| smooth normals (`M`), generated for a vn-less mesh | 82k-triangle scan, mtl texture | 677k-triangle scan, `-up z` |
+<img src="docs/media/logo_texture.gif" alt="42 logo crossfading between face colors and a texture" width="360">
 
-Regenerate the clips with `make gifs` (needs a display and `ffmpeg`).
+*The 42 logo spinning on its central axis, crossfading from per-face grays to a texture (`T`).*
+
+</div>
+
+The parser, vector/matrix math, ear-clipping triangulation, UV generation,
+shader loading and text overlay are all written by hand. The only
+dependencies are the raw OpenGL bindings (`go-gl/gl`) and window/events
+(`go-gl/glfw`); texture decoding uses Go's standard library.
+
+## Highlights
+
+- Handles million-triangle scans (qilin: 677k triangles, car engine: 2.8M)
+- Concurrent `.obj` parser, `.mtl` materials, concave and non-coplanar faces
+- Orbit and free-fly cameras, object translation on all three axes
+- Smooth color ↔ texture crossfade, wireframe overlay, normals and UV-checker views
+- Generated smooth normals, `-up` axis fix for Z-up scans, runtime model switching and drag-and-drop
+- Zero steady-state allocations in the render loop, frustum culling
+
+## Gallery
+
+<table align="center">
+  <tr>
+    <td align="center"><img src="docs/media/teapot_wire.gif" width="260"><br><b>Wireframe</b> (<code>F</code>)<br>raw teapot, bad winding tolerated</td>
+    <td align="center"><img src="docs/media/teapot_uv.gif" width="260"><br><b>UV checker</b> (<code>N</code>)<br>texture is never stretched</td>
+    <td align="center"><img src="docs/media/teapot_normals.gif" width="260"><br><b>Flat normals</b> (<code>N</code>)<br>per-face derivative normals</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/media/teapot_smooth.gif" width="260"><br><b>Smooth normals</b> (<code>M</code>)<br>generated for a mesh with no <code>vn</code></td>
+    <td align="center"><img src="docs/media/porta_nigra.gif" width="260"><br><b>Porta Nigra</b><br>82k-triangle scan with mtl texture</td>
+    <td align="center"><img src="docs/media/qilin.gif" width="260"><br><b>Qilin</b><br>677k triangles, <code>-up z</code></td>
+  </tr>
+</table>
+
+<sub>Clips are rendered by the program itself (`-record`); regenerate with `make gifs` (needs a display and `ffmpeg`).</sub>
+
+## Subject checklist
+
+| Requirement | Status |
+|---|---|
+| Own `.obj` parser, matrices and shader loading | done, no libraries beyond GLFW/GL bindings |
+| Perspective view, rotation around the model's own central axis | done (bounding-box center) |
+| Distinguishable sides with colors | per-face grayscale tinted by `Kd` |
+| Move on three axes, both directions | arrows / `IJKL` / `U` `O` |
+| Texture on key press with soft transition | `T`, 0.4 s smoothstep crossfade |
+| Bonus: concave / non-coplanar faces (raw teapot) | ear clipping on the Newell-normal plane |
+| Bonus: texture not stretched | auto-UV picks planar, cylindrical or spherical; seams split |
+| Extras | smooth normals, wireframe, fly camera, multi-model, drag-and-drop, screenshots, GIF recording |
 
 ## Build & run
 
@@ -57,7 +96,7 @@ Direct invocation:
 ## Controls
 
 | Input | Action |
-|---|---|x
+|---|---|
 | mouse drag | orbit camera around the model |
 | shift-drag / middle-drag | pan |
 | scroll | zoom |
